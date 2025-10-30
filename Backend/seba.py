@@ -74,9 +74,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 # ------- Database URL (MySQL) --------
 DATABASE_URL = (
-    "mysql+pymysql://app_alpha_dev:"
-    "Alpha%402025.DevHub%21"
-    "@dev-db-alpha.unabdevhub.cl:3306/alpha_dev"
+    "placeholder"
 )
 
 engine = create_engine(
