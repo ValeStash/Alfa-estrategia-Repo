@@ -322,6 +322,8 @@ function canEditProgress() {
 
 // --- Generic SPA + API helpers ----------------------------------------------
 const API = "http://127.0.0.1:8000";
+// Expose API base to other scripts that rely on a global variable
+try { window.API = API; } catch (e) { /* ignore in non-browser environments */ }
 const $view = document.getElementById('view');
 const $title = document.getElementById('pageTitle');
 
