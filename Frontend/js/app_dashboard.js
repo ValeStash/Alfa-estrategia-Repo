@@ -1,3 +1,18 @@
+/*
+  app_dashboard.js
+
+  Purpose: Main dashboard utilities and view helpers for the frontend.
+  - Navigation helpers (hash-based routing helpers such as navigateHash)
+  - Caching utilities for objectives mapping
+  - UI helpers (confirmation dialog, formatting helpers)
+  - Dimension ordering and color maps used by charts and lists
+  - Chart rendering helpers (donut, horizontal bars) and related legend rendering
+
+  Notes:
+  - This file exposes some functions to `window` for reuse by other modules.
+  - Chart rendering uses Chart.js when available; animation options are controlled here.
+*/
+
 function navigateHash(newHash) {
   if (location.hash === newHash) {
     router();
@@ -133,128 +148,416 @@ function pintarStatsGlobales(s) {
   document.getElementById('statRecursos').textContent = formatoMoneda(s.recursos);
 }
 
-// --- FUNCIONES DE GRÁFICOS (SIN HOVER) ---
+// funcion gráfico tipo donut (con Chart.js)
 function pintarDonutDimension(containerId, items) {
-  const cont = document.getElementById(containerId);
-  if (!cont) return;
-  cont.className = 'donut-container';
-  const chartEl = document.createElement('div');
-  chartEl.className = 'donut-chart';
-  const labelEL = document.createElement('ul');
-  labelEL.className = 'donut-label';
-  let currentDegree = 0;
-  let gradientString = 'conic-gradient(from 270deg, ';
-  
-  items.forEach((item, index) => {
-    const color = DIMENSION_COLORS[item.etiqueta] || '#ccc';
-    // 'percent' es el tamaño del quesito
-    const segmentDegree = (item.percent / 100) * 360; 
-    const endDegree = currentDegree + segmentDegree;
+  const container = document.getElementById(containerId);
+  if (!container || !items) return;
 
-    gradientString += `${color} ${currentDegree}deg ${endDegree}deg`;
-    if (index < items.length - 1) {
-      gradientString += ', ';
-    }
-
-    const li = document.createElement('li');
-    li.className = 'label__item';
-    const colorSwatch = document.createElement('span');
-    colorSwatch.className = 'label__color';
-    colorSwatch.style.backgroundColor = color;
-    const text = document.createElement('span');
-    // 'valor' es el número que se muestra (avance Promedio)
-    const valorMostrar = (item.valor !== undefined) ? item.valor : item.percent;
-    text.textContent = `${item.etiqueta} (${valorMostrar.toFixed(2)}%)`; 
-    li.appendChild(colorSwatch);
-    li.appendChild(text);
-    labelEL.appendChild(li);
-
-    currentDegree = endDegree;
-  });
-
-  gradientString += ')';
-  if (currentDegree > 0.1) { 
-      chartEl.style.background = gradientString;
-  } else {
-      chartEl.style.background = 'var(--ring-bg)';
-  }
-
-  cont.innerHTML = '';
-  cont.appendChild(chartEl);
-  cont.appendChild(labelEL);
-}
-
-/** Renderiza barras horizontales de recursos. */
-function pintarBarrasHorizontales(containerId, items, formatValue) {
-  const cont = document.getElementById(containerId);
-  if (!cont) {
+  if (typeof Chart === 'undefined') {
+    console.error("Chart.js no está cargado.");
     return;
   }
-  cont.innerHTML = '';
-  const maxValor = Math.max(...items.map((it) => it.valor));
-  items.forEach((it) => {
-    const row = document.createElement('div');
-    row.className = 'bar';
-    const label = document.createElement('div');
-    label.className = 'bar__label';
-    label.textContent = it.etiqueta;
-    const track = document.createElement('div');
-    track.className = 'bar__track';
-    const fill = document.createElement('div');
-    fill.className = 'bar__fill';
-    const colorVar = DIMENSION_COLORS[it.etiqueta] || 'var(--primary)';
-    fill.style.setProperty('--bar-color', colorVar);
-    const ratio = (it.valor / maxValor);
-    fill.style.setProperty('--w', 0);
-    requestAnimationFrame(() => {
-      fill.style.setProperty('--w', Math.max(0, Math.min(100, ratio)));
-    });
-    track.appendChild(fill);
-    const val = document.createElement('div');
-    val.className = 'bar__value';
-    val.textContent = formatValue(it.valor);
-    row.appendChild(label);
-    row.appendChild(track);
-    row.appendChild(val);
-    cont.appendChild(row);
+
+  const canvas = container.querySelector("canvas");
+  const ul = container.querySelector(".donut-label");
+
+  if (!canvas || !ul) return;
+
+  // colores en hexadecimal para que chart.js los tome, de lo contrario no funcionara
+  const colorMap = {
+      'Liderazgo': '#eab308',        
+      'Gestión Pedagógica': '#6d28d9',
+      'Convivencia Escolar': '#3b82f6', 
+      'Gestión de Recursos': '#f97316',
+      'Resultados': '#0f172a'
+  };
+  const grayColor = getComputedStyle(document.documentElement).getPropertyValue('--ring-bg').trim() || '#e9efff';
+
+  let activeIndex = null; 
+
+  // renderización del grafico
+  function renderChart() {
+      if (window.myDonutChartInstance) {
+          window.myDonutChartInstance.destroy();
+      }
+
+      const chartLabels = [];
+      const chartData = [];
+      const chartColors = [];
+      
+      // muestra el donut original (todos)
+      if (activeIndex === null) {
+          let totalFaltante = 0;
+          items.forEach(item => {
+              const val = item.valor !== undefined ? item.valor : (item.percent || 0);
+              const color = colorMap[item.etiqueta] || '#ccc';
+              
+              chartLabels.push(item.etiqueta);
+              chartData.push(val);
+              chartColors.push(color);
+              
+              totalFaltante += Math.max(0, 100 - val); 
+          });
+
+          if (totalFaltante > 0) {
+              chartLabels.push("Por completar");
+              chartData.push(totalFaltante);
+              chartColors.push(grayColor);
+          }
+      } 
+      // muestra el donut de cada dimension (individual)
+      else {
+          const item = items[activeIndex];
+          const val = item.valor !== undefined ? item.valor : (item.percent || 0);
+          const color = colorMap[item.etiqueta] || '#ccc';
+
+          chartLabels.push(item.etiqueta);
+          chartData.push(val);
+          chartColors.push(color);
+
+          chartLabels.push("Fondo");
+          chartData.push(100 - val);
+          chartColors.push(grayColor);
+      }
+      // definición de grafico para chart.js 
+      window.myDonutChartInstance = new Chart(canvas, {
+        type: "doughnut",
+        data: {
+          labels: chartLabels,
+          datasets: [{
+            data: chartData,
+            backgroundColor: chartColors,
+            borderWidth: 0, 
+            spacing: activeIndex === null ? 5 : 0,
+            borderRadius: activeIndex === null ? 3 : 0, 
+            hoverOffset: 4 
+          }]
+      },
+      options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '65%',
+          rotation: -90,
+          circumference: 360,
+          animation: { animateScale: false, animateRotate: true },
+          plugins: {
+            legend: { display: false }, 
+            tooltip: {
+              backgroundColor: '#fff',
+              titleColor: '#0f172a',
+              bodyColor: '#64748b',
+              borderColor: '#e2e8f0',
+              borderWidth: 1,
+              padding: 10,
+              displayColors: true,
+              filter: function(tooltipItem) {
+                 const label = tooltipItem.chart.data.labels[tooltipItem.dataIndex];
+                 return label !== "Por completar" && label !== "Fondo";
+              },
+              callbacks: {
+                label: function(context) {
+                  return ' ' + context.label + ': ' + context.raw.toFixed(1) + '%';
+                }
+              }
+            }
+          }
+        }
+      });
+  }
+
+  // renderización de las leyendas/labels
+  function renderLegend() {
+      ul.innerHTML = ''; 
+      const liAll = document.createElement("li");
+      liAll.className = 'label__item is-reset';
+      if (activeIndex === null) {
+        // opcional: se puede dar un estilo 'activo' si queremos 
+      }
+
+      liAll.addEventListener('click', () => {
+          if (activeIndex !== null) {
+              activeIndex = null; 
+              renderChart();
+              renderLegend();
+          }
+      });
+
+      const spanAllColor = document.createElement("span");
+      spanAllColor.className = 'label__color is-all';
+      const textAll = document.createTextNode(" Ver todos los datos");
+
+      liAll.appendChild(spanAllColor);
+      liAll.appendChild(textAll);
+      ul.appendChild(liAll);
+
+
+      // se crean botones de las dimensionss
+      if (activeIndex !== null) {
+          ul.classList.add('has-selection');
+      } else {
+          ul.classList.remove('has-selection');
+      }
+
+      items.forEach((item, index) => {
+          const val = item.valor !== undefined ? item.valor : (item.percent || 0);
+          const color = colorMap[item.etiqueta] || '#ccc';
+
+          const li = document.createElement("li");
+          li.className = 'label__item'; 
+          
+          if (activeIndex === index) {
+              li.classList.add('is-active');
+          }
+
+          li.addEventListener('click', () => {
+              // seleccionar la dimension 
+              if (activeIndex !== index) {
+                  activeIndex = index;
+                  renderChart();
+                  renderLegend();
+              }
+          });
+
+          const spanColor = document.createElement("span");
+          spanColor.className = 'label__color'; 
+          spanColor.style.backgroundColor = color;
+
+          const text = document.createTextNode(` ${item.etiqueta}`);
+          
+          const spanPct = document.createElement("span");
+          spanPct.style.marginLeft = "auto";
+          spanPct.style.fontWeight = "700";
+          spanPct.style.color = "var(--text)";
+          spanPct.textContent = `(${val.toFixed(1)}%)`;
+
+          li.appendChild(spanColor);
+          li.appendChild(text);
+          li.appendChild(spanPct);
+          
+          ul.appendChild(li);
+      });
+  }
+
+  renderChart();
+  renderLegend();
+}
+
+// Renderiza barras horizontales de recursos (chart.js). 
+function pintarBarrasHorizontales(containerId, items, formatValue) {
+  const cont = document.getElementById(containerId);
+  if (!cont || !items) return;
+
+  if (typeof Chart === 'undefined') {
+    console.error("Chart.js no está cargado.");
+    return;
+  }
+
+  const height = Math.max(200, items.length * 50); 
+  cont.innerHTML = `
+    <div style="position: relative; width: 100%; height: ${height}px;">
+      <canvas></canvas>
+    </div>
+  `;
+  const canvas = cont.querySelector("canvas");
+  
+  if (cont.chartInstance) {
+    cont.chartInstance.destroy();
+  }
+
+  const colorMap = {
+      'Liderazgo': '#eab308',        
+      'Gestión Pedagógica': '#6d28d9',
+      'Convivencia Escolar': '#3b82f6', 
+      'Gestión de Recursos': '#f97316',
+      'Resultados': '#0f172a'
+  };
+
+  const labels = items.map(it => it.etiqueta);
+  const dataValues = items.map(it => it.valor);
+  const backgroundColors = items.map(it => colorMap[it.etiqueta] || 'var(--primary)');
+
+  // configuración del gráfico 
+  cont.chartInstance = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Recursos',
+        data: dataValues,
+        backgroundColor: backgroundColors,
+        borderRadius: 6, 
+        barPercentage: 0.6, 
+        categoryPercentage: 0.8
+      }]
+    },
+    options: {
+      indexAxis: 'y', //escoger desde donde comienzan las barras
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: {
+        duration: 2000, // duración total de la animación (2 segundos)
+        easing: 'easeOutQuart', // efecto de suavizado (empieza rápido, termina lento)
+        delay: (c) => c.dataIndex * 200,
+      },
+      animation: {
+        x:{
+          from: 0,
+          duration: 2000,
+          easing: 'easeOutQuart'
+        }
+      },
+
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#fff',
+          titleColor: '#0f172a',
+          bodyColor: '#64748b',
+          borderColor: '#e2e8f0',
+          borderWidth: 1,
+          callbacks: {
+            label: function(context) {
+              return ' Total: ' + formatValue(context.raw);
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          beginAtZero: true, // IMPORTANTE: para que la animación parta desde 0
+          grid: {
+            color: '#f1f5f9', 
+            borderDash: [5, 5]
+          },
+          ticks: {
+            font: { size: 11 },
+            color: '#64748b',
+            callback: function(value) {
+              if (value >= 1000000) {
+                return '$' + (value / 1000000).toFixed(0) + ' M'; 
+              } else if (value >= 1000) {
+                return '$' + (value / 1000).toFixed(0) + ' k';   
+              }
+              return '$' + value;
+            }
+          }
+        },
+        y: {
+          grid: { display: false },
+          ticks: {
+            font: { weight: '600', size: 12 },
+            color: '#334155'
+          }
+        }
+      }
+    }
   });
 }
 
-/* BARRAS VERTICALES */ 
+/* BARRAS VERTICALES (chart.js)*/ 
 function pintarBarrasVerticales(containerId, items, formatValue) {
   const cont = document.getElementById(containerId);
-  if (!cont) return;
+  if (!cont || !items) return;
 
-  cont.innerHTML = '';
-  
-  const maxValor = Math.max(...items.map((it) => it.valor));
-  const maxHeight = 250 - 20; 
+  if (typeof Chart === 'undefined') {
+    console.error("Chart.js no está cargado.");
+    return;
+  }
 
-  items.forEach((it) => {
-    const col = document.createElement('div');
-    col.className = 'v-bar-col';
-    const val = document.createElement('div');
-    val.className = 'v-bar-value';
-    val.textContent = formatValue(it.valor);
-    const bar = document.createElement('div');
-    bar.className = 'v-bar';
-    const colorVar = DIMENSION_COLORS[it.etiqueta] || 'var(--primary)';
-    bar.style.setProperty('--bar-color', colorVar);
-    const ratio = (it.valor / maxValor);
-    const barHeight = ratio * maxHeight;
-    
-    requestAnimationFrame(() => {
-      bar.style.height = barHeight + 'px';
-    });
+  cont.innerHTML = `
+    <div style="position: relative; width: 100%; height: 300px;">
+      <canvas></canvas>
+    </div>
+  `;
 
-    const label = document.createElement('div');
-    label.className = 'v-bar-label';
-    label.textContent = it.etiqueta;
-    
-    bar.appendChild(val);
-    col.appendChild(bar);
-    col.appendChild(label);
-    cont.appendChild(col);
+  const canvas = cont.querySelector("canvas");
+  if (cont.chartInstance) {
+    cont.chartInstance.destroy();
+  }
+
+  const colorMap = {
+      'Liderazgo': '#eab308',        
+      'Gestión Pedagógica': '#6d28d9',
+      'Convivencia Escolar': '#3b82f6', 
+      'Gestión de Recursos': '#f97316',
+      'Resultados': '#0f172a'
+  };
+
+  const labels = items.map(it => it.etiqueta);
+  const dataValues = items.map(it => it.valor);
+  const backgroundColors = items.map(it => colorMap[it.etiqueta] || 'var(--primary)');
+
+  // configuración del gráfico 
+  cont.chartInstance = new Chart(canvas, {
+    type: 'bar', 
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Cantidad de Objetivos',
+        data: dataValues,
+        backgroundColor: backgroundColors,
+        borderRadius: 6, // Bordes redondeados 
+        barPercentage: 0.5, // Grosor de la columna 
+        categoryPercentage: 0.8
+      }]
+    },
+    options: {
+      indexAxis: 'x', 
+      responsive: true,
+      maintainAspectRatio: false,
+      
+      // Animación de crecimiento vertical
+      animation: {
+        duration: 2000,
+        easing: 'easeOutQuart',
+        delay: (c) => c.dataIndex * 200 // Efecto cascada de izquierda a derecha
+      },
+      animations: {
+        y: { from: 0, duration: 2000, easing: 'easeOutQuart' } // Forzamos crecimiento desde abajo
+      },
+
+      plugins: {
+        legend: { display: false }, // Ocultamos leyenda
+        tooltip: {
+          backgroundColor: '#fff',
+          titleColor: '#0f172a',
+          bodyColor: '#64748b',
+          borderColor: '#e2e8f0',
+          borderWidth: 1,
+          callbacks: {
+            // Tooltip que muestra el valor usando tu formateador
+            label: function(context) {
+              const val = formatValue ? formatValue(context.raw) : context.raw;
+              return ' Total: ' + val;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false }, // Limpiamos líneas verticales para que se vea más moderno
+          ticks: {
+            font: { size: 11, weight: '600' }, // Nombres de dimensiones un poco más negrita
+            color: '#64748b',
+            autoSkip: false, // Asegura que se muestren todas las etiquetas aunque sean largas
+            maxRotation: 0,  // Evita que los textos se inclinen (si caben)
+            minRotation: 0
+          }
+        },
+        y: {
+          beginAtZero: true,
+          grid: {
+            color: '#f1f5f9',
+            borderDash: [5, 5]
+          },
+          ticks: {
+            font: { size: 11 },
+            color: '#94a3b8',
+            precision: 0 // evitamos usar decimales
+          }
+        }
+      }
+    }
   });
 }
 
@@ -267,7 +570,7 @@ function pintarAvancePequeño(id, valor) {
   const target = Math.max(0, Math.min(100, valor));
   let cur = 0;
 
-  const color = (target >= 100) ? 'var(--ok)' : 'var(--primary)';
+  const color = (target >= 100) ? 'var(--ok-solid)' : 'var(--primary)';
   ring.style.setProperty('--fill-color', color);
   const step = () => {
     const diff = target - cur;
@@ -322,10 +625,9 @@ function canEditProgress() {
 
 // --- Generic SPA + API helpers ----------------------------------------------
 const API = "http://127.0.0.1:8000";
-// Expose API base to other scripts that rely on a global variable
-try { window.API = API; } catch (e) { /* ignore in non-browser environments */ }
-const $view = document.getElementById('view');
-const $title = document.getElementById('pageTitle');
+try {window.API = API;} catch {} 
+let $view;
+let $title;
 
 /** Cabecera Authorization si existe token. */
 function authHeaders() {
@@ -539,7 +841,6 @@ function showForbidden(msg = 'No tienes permisos para acceder a esta sección.')
 const plansCache = new Map();
 window.invalidatePlansCache = (dim) => dim ? plansCache.delete(dim) : plansCache.clear();
 
-// Delegated handler for refresh buttons (<button id="btnRefrescar" data-dim="...">)
 // This ensures the refresh works even after the view is re-rendered.
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('#btnRefrescar');
@@ -556,6 +857,7 @@ document.addEventListener('click', (e) => {
   // showPlanList is a function declaration (hoisted) so it's safe to call here
   if (typeof showPlanList === 'function') showPlanList(dim);
 });
+
 
 /** Agrupa planes por objetivo dentro de una dimensión (con memoización). */
 async function getPlansByDimension(dimensionValue) {
@@ -577,45 +879,72 @@ async function getPlansByDimension(dimensionValue) {
 
 // --- Views: Dashboard --------------------------------------------------------
 async function showDashboard() {
-  $title.textContent = 'Panel de Gestión';
+  $title.textContent = '';
+  const fechaHoy = new Date().toLocaleDateString('es-CL', { 
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
+  });
+  const fechaFormateada = fechaHoy.charAt(0).toUpperCase() + fechaHoy.slice(1);
   $view.innerHTML = `
-    <section class="grid">
-      <article class="card">
-        <header class="card__header"><h2>Avance Porcentual por Dimension</h2></header>
-        <div class="card__body">
-          <div id="donutDimensionContainer"></div>
+    <header class="dashboard-header card">
+        <div class="header-text">
+            <h1>Panel de Gestión</h1>
+            <p>Resumen estratégico y métricas clave</p>
         </div>
-      </article>
+        <div class="header-meta">
+            <span class="current-date">${fechaFormateada}</span>
+            </div>
+    </header>
 
-      <article class="card">
-        <header class="card__header"><h2>Avance Global Planes Estratégicos</h2></header>
-        <div class="card__body">
-          <ul class="stats">
-            <li><span>Planes estratégicos</span><strong id="statPlans">...</strong></li>
-            <li><span>Objetivos estratégicos</span><strong id="statActividades">...</strong></li>
-            <li><span>Indicadores</span><strong id="statIndicadores">...</strong></li>
-            <li><span>Metas</span><strong id="statMetas">...</strong></li>
-            <li><span>Recursos</span><strong id="statRecursos">...</strong></li>
-          </ul>
-        </div>
-      </article>
+    <section class="dashboard-columns">
+      <div class="dashboard-col">
 
-      <article class="card">
-        <header class="card__header"><h2>Recuento de Objetivos Estratégicos por Dimensión</h2></header>
-        <div class="card__body">
-          <div id="objetivosBars" class="v-bars"></div>
-        </div>
-      </article>
+        <article class="card">
+          <header class="card__header"><h2>Avance Porcentual por Dimension</h2></header>
+          <div class="card__body">
+            <div id="donutDimensionContainer" class="donut-container">
+              <div class="donut-chart">
+                <canvas id="chartCanvas"></canvas> 
+              </div>
 
-      <article class="card">
-        <header class="card__header"><h2>Recursos por Dimension</h2></header>
-        <div class="card__body">
-          <div class="bars" id="recursosBars"></div>
-        </div>
-      </article>
+              <ul class="donut-label"></ul>
+          </div>
+        </article>
+
+        <article class="card">
+          <header class="card__header"><h2>Recuento de Objetivos Estratégicos por Dimensión</h2></header>
+          <div class="card__body">
+            <div id="objetivosBars" class="v-bars"></div>
+          </div>
+        </article>
+
+      </div>
+        
+      <div class="dashboard-col">
+
+        <article class="card">
+          <header class="card__header"><h2>Avance Global Planes Estratégicos</h2></header>
+          <div class="card__body">
+            <ul class="stats">
+              <li><span>Planes estratégicos</span><strong id="statPlans">...</strong></li>
+              <li><span>Objetivos estratégicos</span><strong id="statActividades">...</strong></li>
+              <li><span>Indicadores</span><strong id="statIndicadores">...</strong></li>
+              <li><span>Metas</span><strong id="statMetas">...</strong></li>
+              <li><span>Recursos</span><strong id="statRecursos">...</strong></li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="card">
+          <header class="card__header"><h2>Recursos por Dimension</h2></header>
+          <div class="card__body">
+            <div class="bars" id="recursosBars"></div>
+          </div>
+        </article>
+
+      </div>
     </section>
   `;
-
+  
   const statsPromise = apiFetch('/stats/totals');
   const objectivesPromise = apiFetch('/objectives?limit=500');
   const plansPromise = apiFetch('/plans?limit=500'); 
@@ -631,14 +960,14 @@ async function showDashboard() {
   const plans = await plansRes.json();
   const resourcesRaw = await resourcesRes.json();
   stats.total_objetivos = objectives.length; 
-
+  
   //Stats
   pintarStatsGlobales(stats);
   
   //Donut 
   const agrupado = {};
   ORDEN_DIMENSIONES.forEach(dim => {
-      agrupado[dim] = { sumaAvance: 0, cantidad: 0 };
+    agrupado[dim] = { sumaAvance: 0, cantidad: 0 };
   });
   objectives.forEach(obj => {
     const dim = tituloDimension(obj.dimension);
@@ -647,7 +976,7 @@ async function showDashboard() {
       agrupado[dim].cantidad++;
     }
   });
-
+  
   let totalPromedio = 0;
   const avanceData = Object.entries(agrupado).map(([dim, datos]) => {
     const promedio = datos.cantidad > 0 ? (datos.sumaAvance / datos.cantidad) : 0;
@@ -657,10 +986,11 @@ async function showDashboard() {
       valor: promedio
     };
   });
-
+  
   avanceData.forEach(item => {
-    item.percent = totalPromedio > 0 ? (item.valor / totalPromedio) * 100 : 0;
-  }); 
+    item.percent = item.valor; 
+    item.valor = item.valor !== undefined ? item.valor : 0;
+  });
   const avanceOrdenado = ordenarDatosPorDimension(avanceData);
   pintarDonutDimension('donutDimensionContainer', avanceOrdenado);
 
@@ -707,10 +1037,12 @@ async function showDashboard() {
   pintarBarrasHorizontales('recursosBars', ordenarDatosPorDimension(recursosData), formatoMoneda); 
 
 }
+
+
 /** Form de planes (solo editores). */
 async function showPlanForm() {
   if (!isEditor()) { showForbidden('Solo los editores pueden crear/editar planes.'); return; }
-  $title.textContent = 'Formulario de Planes Estratégicos';
+  $title.textContent = '';
   const html = await loadHTML('plan_form.html');
   $view.innerHTML = html;
   await loadScriptOnce('js/plan_form.js');
@@ -723,12 +1055,18 @@ const currentFilters = { sort: 'objetivo-asc', colegio: 'TODOS', subdimension: '
 
 // --- Views: lista de objetivos por dimensión --------------------------------
 async function showPlanList(dimensionValue) {
-  $title.textContent = `Plan Estratégico — ${tituloDimension(dimensionValue)}`;
+  $title.textContent = ``;
   $view.innerHTML = `
+    <header class="dashboard-header card">
+        <div class="header-text">
+            <h1>Plan estratégico — ${tituloDimension(dimensionValue)}</h1>
+            <p>Objetivos estratégicos actuales con sus respectivos Recursos</p>
+        </div>
+    </header>
     <section class="card card--full">
       <header class="card__header" style="display:flex;justify-content:space-between;align-items:center;">
         <h2 style="margin:0;">${tituloDimension(dimensionValue)}</h2>
-        <button id="btnRefrescar" type="button" data-dim="${encodeURIComponent(dimensionValue)}" class="btn">Refrescar</button>
+        <button id="btnRefrescar" class="btn" data-dim="${encodeURIComponent(dimensionValue)}">Refrescar</button>
       </header>
       <div class="card__body" id="plansList">Cargando…</div>
     </section>
@@ -848,7 +1186,13 @@ $list.addEventListener('click', async (ev) => {
     }
   });
 
-  // NOTE: refresh handled by delegated listener attached once near the plansCache declaration
+  document.getElementById('btnRefrescar')?.addEventListener('click', () => {
+    if (typeof plansCache !== 'undefined') {
+        plansCache.delete(dimensionValue);
+        console.log(`Caché de ${dimensionValue} eliminada. Forzando recarga.`);
+    }
+    showPlanList(dimensionValue);
+  });
 }
 
 // --- Views: detalle de objetivo ---------------------------------------------
@@ -937,8 +1281,15 @@ async function showObjectiveDetail(dimensionValue, objetivo) {
     }
   }
 
-  $title.textContent = `${tituloDimension(dimensionValue)} — Objetivo`;
+  $title.textContent = ``;
   $view.innerHTML = `
+    <header class="dashboard-header card">
+        <div class="header-text">
+            <h1>${tituloDimension(dimensionValue)} — Objetivo</h1>
+            <p>Registro actual de las ESTRATEGIAS respecto al Objetivo estratégico</p>
+        </div>
+    </header>
+
     <section class="card card--full">
       <header class="card__header" style="display:flex;gap:.5rem;align-items:center;">
         <button id="btnFiltros" class="btn btn--secondary">Filtrar</button>
@@ -962,23 +1313,24 @@ async function showObjectiveDetail(dimensionValue, objetivo) {
 
       <div class="card__body">
         <div class="table-wrap">
-          <table class="plan-table">
-            <thead>
-              <tr>
-                <th>Colegio</th>
-                <th>Estrategia</th>
-                <th>Subdimensiones</th>
-                <th>Acción</th>
-                <th>Descripción</th>
-                <th>Inicio</th>
-                <th>Término</th>
-                <th>Programa</th>
-                <th>Responsable</th>
-              </tr>
-            </thead>
-            <tbody id="plansTableBody"><tr><td colspan="10">Cargando acciones...</td></tr></tbody>
-          </table>
-        </div>
+          <div class ="hscroll">
+            <table class="plan-table">
+              <thead>
+                <tr>
+                  <th>Colegio</th>
+                  <th>Estrategia</th>
+                  <th>Subdimensiones</th>
+                  <th>Acción</th>
+                  <th>Descripción</th>
+                  <th>Inicio</th>
+                  <th>Término</th>
+                  <th>Programa</th>
+                  <th>Responsable</th>
+                </tr>
+              </thead>
+              <tbody id="plansTableBody"><tr><td colspan="10">Cargando acciones...</td></tr></tbody>
+            </table>
+          </div>
       </div>
     </section>
   `;
@@ -1079,6 +1431,7 @@ async function apiUploadEvidenceByPlan(planId, file, description = "") {
     document.getElementById('plan-ev-uploader').style.display = canEdit ? 'flex' : 'none';
     refresh();
   });
+
   document.getElementById('plan-ev-close').addEventListener('click', () => {
     document.getElementById('plan-ev-modal').style.display = 'none';
     CURRENT_PLAN = null;
@@ -1107,7 +1460,7 @@ async function showEvidenceUpload(dimensionValue, objetivo) {
   const plansByDim = await getPlansByDimension(dimensionValue);
   const plansForObjective = (plansByDim.groups.get(objetivo) || []).slice();
 
-  $title.textContent = `${tituloDimension(dimensionValue)} — Evidencias`;
+  $title.textContent = ``;
 
   if (plansForObjective.length === 0) {
     $view.innerHTML = `
@@ -1126,6 +1479,13 @@ async function showEvidenceUpload(dimensionValue, objetivo) {
   }
 
   $view.innerHTML = `
+    <header class="dashboard-header card">
+        <div class="header-text">
+            <h1>${tituloDimension(dimensionValue)} — Evidencias</h1>
+            <p>Evidencias adjuntas respecto a las ACCIONES de las estrategias planteadas</p>
+        </div>
+    </header>
+
     <section class="card card--full">
       <header class="card__header" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
         <button class="btn btn--ghost" id="btnBack">← Volver</button>
@@ -1321,8 +1681,15 @@ async function showObjectiveResources(dimensionValue, objetivo) {
   };
   const txt = (v) => (v && String(v).trim()) ? String(v) : '–';
 
-  $title.textContent = `${tituloDimension(dimensionValue)} — Recursos`;
+  $title.textContent = ``;
   $view.innerHTML = `
+    <header class="dashboard-header card">
+        <div class="header-text">
+            <h1>${tituloDimension(dimensionValue)} — Recursos</h1>
+            <p>Recursos de las estrategias planteadas respecto a sus objetivos estratégicos</p>
+        </div>
+    </header>
+
     <section class="card card--full">
       <header class="card__header" style="display:flex;gap:.5rem;align-items:center;">
         <button class="btn btn--ghost" id="btnVolver">← Volver</button>
@@ -1463,9 +1830,29 @@ async function showIndicatorsForGoal(goalId) {
       }
 
       progresses.push(avancePct);
-
       const avanceWidth = avancePct.toFixed(1);
-      const barColor = avancePct >= 100 ? '#28a745' : '#007bff';
+      const metaNumerica = parseFloat(x.target);
+      let barColor = '';
+
+      if (!isNaN(metaNumerica) && metaNumerica > 0) {
+
+        if (avancePct >= metaNumerica) {
+          barColor = 'var(--ok)';
+        } else if (avancePct >= (metaNumerica / 2)) { 
+          barColor = 'var(--warn)';
+        } else {
+          barColor = 'var(--danger)'; 
+        }
+
+      } else {
+        if (avancePct >= 75) {
+          barColor = 'var(--ok)';
+        } else if (avancePct >= 50) {
+          barColor = 'var(--warn)';
+        } else {
+          barColor = 'var(--danger)'; 
+        }
+      }
 
       return `
         <tr data-id="${x.id}" data-kind="${kind}" style="vertical-align: middle;">
@@ -1607,6 +1994,13 @@ async function showIndicatorsForGoal(goalId) {
   // --- Indicators page shell ------------------------------------------------
   $title.textContent = `Indicadores — Meta ${goalId}`;
   $view.innerHTML = `
+    <header class="dashboard-header card">
+        <div class="header-text">
+            <h1>Indicadores — Meta ${goalId}</h1>
+            <p>...</p>
+        </div>
+    </header>
+
     <section class="card card--full">
       <header class="card__header" style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap;">
         <button class="btn btn--ghost" id="btnBack">← Volver</button>
@@ -1835,8 +2229,15 @@ async function showStrategicGoalsEditor(dimensionValue, objetivo) {
   for (let y = startY; y <= endY; y++) years.push(y);
   const yearOptions = years.map(y => `<option value="${y}" ${y===new Date().getUTCFullYear()?'selected':''}>${y}</option>`).join('');
 
-  $title.textContent = `${tituloDimension(dimensionValue)} — Metas Estratégicas`;
+  $title.textContent = ``;
   $view.innerHTML = `
+    <header class="dashboard-header card">
+        <div class="header-text">
+            <h1>${tituloDimension(dimensionValue)} — Metas Estratégicas</h1>
+            <p>...</p>
+        </div>
+    </header>
+
     <section class="card card--full">
       <header class="card__header" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
         <button class="btn btn--ghost" id="btnBack">← Volver</button>
@@ -1984,24 +2385,24 @@ async function router() {
     const mEvi = hash.match(/^#\/evidencias\/([^/]+)\/(.+)$/);
 
     if (mEvi) { 
-      await showEvidenceUpload(decodeURIComponent(mEvi[1]), decodeURIComponent(mEvi[2])); 
+       showEvidenceUpload(decodeURIComponent(mEvi[1]), decodeURIComponent(mEvi[2])); 
       return; 
     }
 
-    if (mGoal)   { await showIndicatorsForGoal(decodeURIComponent(mGoal[1])); return; }
+    if (mGoal)   { showIndicatorsForGoal(decodeURIComponent(mGoal[1])); return; }
 
     const mMetas = hash.match(/^#\/metas\/([^/]+)\/(.+)$/);
-    if (mMetas)  { await showStrategicGoalsEditor(decodeURIComponent(mMetas[1]), decodeURIComponent(mMetas[2])); return; }
+    if (mMetas)  { showStrategicGoalsEditor(decodeURIComponent(mMetas[1]), decodeURIComponent(mMetas[2])); return; }
 
-    if (hash === '#/dashboard')          return await showDashboard(); // CAMBIO: 'await'
-    if (hash === '#/reportes')           return await showReportes();
-    if (hash === '#/planes/form')        return isEditor() ? await showPlanForm() : showForbidden('Solo los editores pueden crear/editar planes.');
-    if (hash === '#/planes/liderazgo')   return await showPlanList('LIDERAZGO');
-    if (hash === '#/planes/gestion')     return await showPlanList('GESTION_PEDAGOGICA');
-    if (hash === '#/planes/convivencia') return await showPlanList('CONVIVENCIA_ESCOLAR');
-    if (hash === '#/planes/recursos')    return await showPlanList('GESTION_RECURSOS');
+    if (hash === '#/dashboard')          return showDashboard(); 
+    if (hash === '#/reportes')           return showReportes();
+    if (hash === '#/planes/form')        return isEditor() ?  showPlanForm() : showForbidden('Solo los editores pueden crear/editar planes.');
+    if (hash === '#/planes/liderazgo')   return showPlanList('LIDERAZGO');
+    if (hash === '#/planes/gestion')     return showPlanList('GESTION_PEDAGOGICA');
+    if (hash === '#/planes/convivencia') return showPlanList('CONVIVENCIA_ESCOLAR');
+    if (hash === '#/planes/recursos')    return showPlanList('GESTION_RECURSOS');
 
-    return await showDashboard(); 
+    return showDashboard(); 
   } catch (e) {
       // Si algo falla (ej. 401 de apiFetch)
       console.error("Error en el router:", e);
@@ -2019,14 +2420,17 @@ async function router() {
 // --- App bootstrapping ------------------------------------------------------
 window.addEventListener('hashchange', router);
 window.addEventListener('DOMContentLoaded', () => {
+  $view = document.getElementById('view');
+  $title = document.getElementById('pageTitle');
   const liForm = document.querySelector('#nav-plan-form')?.closest('.nav__item, li, a');
   if (liForm && !isEditor()) liForm.style.display = 'none';
   router(); 
 });
 window.addEventListener('DOMContentLoaded', setupAccordionTransition);
-window.apiFetch = apiFetch;
-window.formatoMoneda = formatoMoneda;
-window.ensureObjectiveByName = ensureObjectiveByName;
+
+window.apiFetch = apiFetch; // Expose for debugging
+window.formatoMoneda = formatoMoneda; // Expose for debugging
+window.ensureObjectiveByName = ensureObjectiveByName; // Expose for debugging
 
 document.getElementById('nav-dashboard')?.addEventListener('click', e => { e.preventDefault(); location.hash = '#/dashboard'; });
 document.getElementById('nav-plan-form')?.addEventListener('click', e => { e.preventDefault(); location.hash = '#/planes/form'; });
