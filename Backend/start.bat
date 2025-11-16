@@ -1,3 +1,3 @@
 @echo off
-python -m uvicorn seba:app --reload
+python -m uvicorn start:app --reload
 pause
