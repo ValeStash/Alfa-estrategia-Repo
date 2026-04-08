@@ -1,3 +1,19 @@
+/*
+  Login.js
+
+  Purpose: Handle the login form UX and authentication request.
+
+  Main responsibilities:
+  - Manage a small status/progress bar and icon during authentication.
+  - Toggle password visibility.
+  - Submit credentials to `/auth/login`, store token on success and redirect
+    to `dashboard.html`.
+
+  Notes:
+  - This module assumes the login form contains elements with ids used below
+    (rut, password, submit, loginMsg, ShowPassword, progressBar, statusIcon).
+*/
+
 const form = document.querySelector('form');
 const $rut = document.getElementById('rut');
 const $password = document.getElementById('password');
@@ -7,10 +23,6 @@ const $toggle   = document.getElementById('ShowPassword')
 const $statusBar = document.getElementById('progressBar');
 const $statusIcon = document.getElementById('statusIcon');
 
-/**
- * @param {('loading'|'success'|'error'|'initial')} state
- * @param {string} iconText 
- */
 
 function updateStatus(state, iconText = '') {
     $statusBar.className = 'progress-bar';
